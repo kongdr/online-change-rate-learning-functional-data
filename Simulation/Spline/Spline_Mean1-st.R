@@ -82,7 +82,7 @@ for(K in 1:Kmax){
 
   if(K %in% sub.streams){
     t0 <- Sys.time()
-    estimation_results <- estimatemuderivROBUSTv5(x, y, eval_grid = eval_mu)
+    estimation_results <- estimate_mu_deriv_CLASSIC(x, y, eval_grid = eval_mu)
     mu1_est <- estimation_results$mu1_est
     mu_est <- estimation_results$mu_est
     # Bias correction for the derivative
