@@ -6,6 +6,7 @@ rm(list=ls())
 # Required libraries
 library(fda)
 library(Matrix)
+library(foreach)
 library(mgcv)
 library(pracma)
 source("./Spline_Cov1-st_fun.R", encoding = 'UTF-8')
@@ -127,7 +128,7 @@ for(K in 1:Kmax) {
   # 5. If K is in sub.streams, perform covariance derivative estimation
   if (K %in% sub.streams) {
     t0 <- Sys.time()
-    estimation_results <- estimate_cov_deriv_FULLY_ADAPTIVE_SPLINE_GAM_V19_5(
+    estimation_results <- estimate_cov_deriv_FULLY_ADAPTIVE_SPLINE_GAM_V19_6(
       id = id, 
       x = x, 
       y = y, 
