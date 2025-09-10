@@ -128,7 +128,7 @@ for(K in 1:Kmax) {
   # 5. If K is in sub.streams, perform covariance derivative estimation
   if (K %in% sub.streams) {
     t0 <- Sys.time()
-    estimation_results <- estimate_cov_deriv_FULLY_ADAPTIVE_SPLINE_GAM_V19_6(
+    estimation_results <- estimate_cov_deriv_FULLY_ADAPTIVE_SPLINE_GAM_V19_5(
       id = id, 
       x = x, 
       y = y, 
