@@ -20,42 +20,67 @@ estimate_cov_deriv_WAVELET_GAM_V25_1 <- function(
     
     verbose = TRUE
 ) {
+
   all_t <- unlist(lapply(data_list$t, function(x) x[!is.na(x)]))
   all_y <- unlist(lapply(data_list$y, function(x) x[!is.na(x)]))
   
   if (length(all_t) != length(all_y)) {
     stop("Lengths of all_t and all_y do not match after NA removal.")
   }
-  if (length(unique(all_t)) < 4) { ### <<< robustness
+  if (length(unique(all_t)) < 4) {
     stop("Not enough unique time points (< 4) in data_list to estimate mean function.")
   }
   
-  safe_mean_smoother <- function(x, y){
-    mean_obj <- NULL
-    tryCatch({
-      mean_obj <- smooth.spline(x = x, y = y, tol = 1e-6, df = min(length(unique(x)) - 1, 7))
-    }, error = function(e){
-      message("smooth.spline failed: ", e$message, ". Falling back to gam for mean estimation.")
-      df_gam <- data.frame(x=x, y=y)
-      k_gam_mean <- min(length(unique(x)) -1, 7)
-      if(k_gam_mean < 3) {
-        warning("Not enough unique x values for gam mean smoothing. Returning constant mean.")
-        return(function(t) rep(mean(y, na.rm=TRUE), length(t)))
-      }
-      mean_obj <- mgcv::gam(y ~ s(x, k = k_gam_mean), data = df_gam, method = "REML")
-    })
+  wavelet_mean_smoother <- function(x, y, J, filt.num, fam, thresh_type, thresh_policy) {
+    grid_len <- 2^J
+    t_range <- range(x, na.rm = TRUE)
+    t_breaks <- seq(t_range[1], t_range[2], length.out = grid_len + 1)
+    t_mids <- (t_breaks[-1] + t_breaks[-(grid_len + 1)]) / 2
     
-    if ("smooth.spline" %in% class(mean_obj)) {
-      mu_hat_func_inner <- function(t) predict(mean_obj, x = t)$y
-    } else if ("gam" %in% class(mean_obj)) {
-      mu_hat_func_inner <- function(t) predict(mean_obj, newdata = data.frame(x = t))
-    } else {
-      stop("Failed to estimate mean function.")
+    bins <- .bincode(x, t_breaks, include.lowest = TRUE)
+    y_binned_means <- tapply(y, bins, mean, na.rm = TRUE)
+    
+    y_grid <- rep(NA, grid_len) 
+    valid_bins <- as.integer(names(y_binned_means))
+    y_grid[valid_bins] <- y_binned_means
+    
+    is_na_grid <- is.na(y_grid)
+    if(any(is_na_grid)) {
+      non_na_indices <- which(!is_na_grid)
+      if (length(non_na_indices) > 1) {
+        interp_result <- stats::approx(
+          x = non_na_indices, 
+          y = y_grid[non_na_indices], 
+          xout = 1:grid_len, 
+          method = "linear", 
+          rule = 2 
+        )
+        y_grid <- interp_result$y
+      } else if (length(non_na_indices) == 1) { 
+        y_grid <- rep(y_grid[non_na_indices], grid_len)
+      } else {
+        y_grid <- rep(mean(y, na.rm = TRUE), grid_len)
+      }
     }
+    
+    wt_mean <- wavethresh::wd(y_grid, filter.number = filt.num, family = fam)
+    wt_mean_thr <- wavethresh::threshold(wt_mean, type = thresh_type, policy = thresh_policy)
+    y_smoothed_grid <- wavethresh::wr(wt_mean_thr)
+    
+    mu_hat_func_inner <- stats::splinefun(t_mids, y_smoothed_grid)
+ 
     return(mu_hat_func_inner)
   }
   
-  mu_hat_func <- safe_mean_smoother(x = all_t, y = all_y)
+  mu_hat_func <- wavelet_mean_smoother(
+    x = all_t, 
+    y = all_y, 
+    J = J_dyadic, 
+    filt.num = filter.number, 
+    fam = family,
+    thresh_type = wavelet_threshold_type,
+    thresh_policy = wavelet_threshold_policy
+  )
   
   num_curves <- length(data_list$t)
   if (num_curves == 0) stop("data_list is empty.")
@@ -116,12 +141,13 @@ estimate_cov_deriv_WAVELET_GAM_V25_1 <- function(
     cov_dt[, s_sorted := pmin(s, t)]
     cov_dt[, t_sorted := pmax(s, t)]
     cov_data_df_unique <- as.data.frame(unique(cov_dt, by = c("s_sorted", "t_sorted"))[, c("s", "t", "v")])
-  } else { # use dplyr
+  } else { 
     cov_data_df_unique <- cov_data_df %>%
       dplyr::mutate(s_sorted = pmin(s, t), t_sorted = pmax(s, t)) %>%
       dplyr::distinct(s_sorted, t_sorted, .keep_all = TRUE) %>%
       dplyr::select(-s_sorted, -t_sorted)
   }
+  
   grid_size <- 2^J_dyadic
   s_breaks <- seq(min(eval_grid), max(eval_grid), length.out = grid_size + 1)
   t_breaks <- s_breaks
@@ -139,18 +165,19 @@ estimate_cov_deriv_WAVELET_GAM_V25_1 <- function(
   raw_cov_matrix[as.matrix(binned_cov[, c("s_bin", "t_bin")])] <- binned_cov$v_mean
   raw_cov_matrix <- (raw_cov_matrix + t(raw_cov_matrix)) / 2
   raw_cov_matrix[is.nan(raw_cov_matrix)] <- 0
+
   wt <- wavethresh::imwd(raw_cov_matrix, filter.number = filter.number, family = family)
   wt_thr <- wavethresh::threshold(wt, type = wavelet_threshold_type, policy = wavelet_threshold_policy)
   cov_wavelet_denoised_matrix <- wavethresh::imwr(wt_thr)
   cov_wavelet_denoised_matrix <- (cov_wavelet_denoised_matrix + t(cov_wavelet_denoised_matrix)) / 2
-  
+
   k_val <- floor(gam_k_base * (num_curves / 10)^(gam_k_power))
   k_val <- min(k_val, gam_k_max)
   k_val <- max(k_val, 5)
-
+  
   k_val_s <- min(k_val, length(unique(s_mids)) - 1)
   k_val_t <- min(k_val, length(unique(t_mids)) - 1)
-  k_val_s <- max(k_val_s, 3) # k at least 3
+  k_val_s <- max(k_val_s, 3) 
   k_val_t <- max(k_val_t, 3) 
   
   gam_input_df <- data.frame(s = rep(s_mids, times = grid_size),
@@ -162,18 +189,20 @@ estimate_cov_deriv_WAVELET_GAM_V25_1 <- function(
   if (gam_downsample_ratio < 1 && nrow(gam_input_df) > 500) {
     sample_size <- max(500, floor(nrow(gam_input_df) * gam_downsample_ratio))
     gam_input_df <- gam_input_df[sample(1:nrow(gam_input_df), sample_size, replace = FALSE), ]
-    if (verbose) cat(paste("--> step 3", nrow(gam_input_df), "row.\n"))
   }
+  
   final_smoother <- mgcv::gam(v ~ te(s, t, k = c(k_val_s, k_val_t)), data = gam_input_df, method = gam_method)
   
   grid_for_pred <- expand.grid(s = eval_grid, t = eval_grid)
   final_smooth_vector <- predict(final_smoother, newdata = grid_for_pred)
   final_cov_matrix <- matrix(final_smooth_vector, nrow = length(eval_grid), ncol = length(eval_grid))
   final_cov_matrix <- (final_cov_matrix + t(final_cov_matrix)) / 2
+  
   h <- eval_grid[2] - eval_grid[1]
   if (is.na(h) || h <= 0) stop("eval_grid must be equally spaced and have length > 1.")
   
   grad <- pracma::gradient(final_cov_matrix, h1 = h, h2 = h)
   final_deriv_matrix <- grad[[1]]
+  
   return(final_deriv_matrix)
 }
