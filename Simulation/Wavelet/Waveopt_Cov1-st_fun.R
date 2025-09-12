@@ -16,8 +16,7 @@ estimate_cov_deriv_WAVELET_GAM_V25_1 <- function(
     gam_downsample_ratio = 0.2,
     wavelet_threshold_type = "hard",
     wavelet_threshold_policy = "universal",
-    max_pairs_per_curve = 1000,
-    
+    max_pairs_per_curve = 1000,  
     verbose = TRUE
 ) {
 
