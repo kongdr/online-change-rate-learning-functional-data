@@ -7,6 +7,7 @@ library(wavethresh)
 library(pracma)
 library(dplyr)
 library(mgcv)
+library(data.table)
 source("./Waveopt_Cov1-st_fun.R", encoding = 'UTF-8')
 
 # 1. Function definitions
